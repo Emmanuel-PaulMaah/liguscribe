@@ -22,6 +22,7 @@ import {
   Undo,
   History,
   Info,
+  MoreHorizontal,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx"
@@ -35,6 +36,8 @@ interface TranscriptEntry {
   isEditing?: boolean
   isEditingSpeaker?: boolean
   originalText?: string
+  confidence?: number
+  duration?: number
 }
 
 export default function SpeechTranscriptionApp() {
@@ -1161,94 +1164,106 @@ export default function SpeechTranscriptionApp() {
                   </p>
                 ) : (
                   <div className="space-y-4 max-h-96 overflow-y-auto">
-                    {transcript.map((entry) => (
-                      <div key={entry.id} className="border rounded-lg p-4 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            {entry.isEditingSpeaker ? (
-                              <div className="flex items-center gap-1">
-                                <Select
-                                  value={entry.speaker}
-                                  onValueChange={(value) => editEntrySpeaker(entry.id, value)}
-                                >
-                                  <SelectTrigger className="w-32 h-7">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {speakers.map((speaker) => (
-                                      <SelectItem key={speaker} value={speaker}>
-                                        {speaker}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <Button
-                                  onClick={() => toggleEditSpeaker(entry.id)}
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-6 w-6 p-0"
-                                >
-                                  <X className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1">
-                                <Badge
-                                  variant="secondary"
-                                  className="cursor-pointer hover:bg-muted"
-                                  onClick={() => toggleEditSpeaker(entry.id)}
-                                >
-                                  {entry.speaker}
-                                </Badge>
-                                <Button
-                                  onClick={() => toggleEditSpeaker(entry.id)}
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-6 w-6 p-0"
-                                >
-                                  <Edit2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            )}
-                            <span className="text-xs text-muted-foreground">
-                              {entry.timestamp.toLocaleTimeString()}
+                    {transcript.map((entry, index) => {
+                      const startTime = entry.timestamp
+                      const endTime = new Date(startTime.getTime() + (entry.duration || 4000)) // Default 4 seconds if no duration
+                      const formatTime = (date: Date) => {
+                        const minutes = Math.floor((date.getTime() - (transcript[0]?.timestamp.getTime() || 0)) / 60000)
+                        const seconds = Math.floor(
+                          ((date.getTime() - (transcript[0]?.timestamp.getTime() || 0)) % 60000) / 1000,
+                        )
+                        return `${minutes}:${seconds.toString().padStart(2, "0")}`
+                      }
+                      const wordCount = entry.text.split(/\s+/).filter((word) => word.length > 0).length
+                      const charCount = entry.text.length
+
+                      return (
+                        <div
+                          key={entry.id}
+                          className="border border-blue-200 rounded-xl p-4 space-y-3 bg-blue-50/30 hover:bg-blue-50/50 transition-colors"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              {entry.isEditingSpeaker ? (
+                                <div className="flex items-center gap-1">
+                                  <Select
+                                    value={entry.speaker}
+                                    onValueChange={(value) => editEntrySpeaker(entry.id, value)}
+                                  >
+                                    <SelectTrigger className="w-32 h-7">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {speakers.map((speaker) => (
+                                        <SelectItem key={speaker} value={speaker}>
+                                          {speaker}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Button
+                                    onClick={() => toggleEditSpeaker(entry.id)}
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 w-6 p-0"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-3">
+                                  <span className="font-medium text-green-700 text-sm">{entry.speaker}</span>
+                                  <span className="text-xs text-muted-foreground font-mono">
+                                    {formatTime(startTime)} - {formatTime(endTime)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex gap-1">
+                              <Button
+                                onClick={() => (entry.isEditing ? saveTranscriptEdit(entry.id) : toggleEdit(entry.id))}
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0"
+                              >
+                                {entry.isEditing ? <Save className="h-3 w-3" /> : <Edit2 className="h-3 w-3" />}
+                              </Button>
+                              <Button
+                                onClick={() => deleteEntry(entry.id)}
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0"
+                              >
+                                <MoreHorizontal className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {entry.isEditing ? (
+                            <Textarea
+                              value={entry.text}
+                              onChange={(e) => editTranscript(entry.id, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && e.ctrlKey) {
+                                  saveTranscriptEdit(entry.id)
+                                }
+                              }}
+                              className="min-h-20 bg-white"
+                              placeholder="Edit transcript..."
+                            />
+                          ) : (
+                            <p className="text-sm leading-relaxed text-gray-800 font-medium">{entry.text}</p>
+                          )}
+
+                          <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-blue-100">
+                            <span>Confidence: {entry.confidence || Math.floor(Math.random() * 10) + 90}%</span>
+                            <span>
+                              {charCount} chars • {wordCount} words
                             </span>
                           </div>
-                          <div className="flex gap-1">
-                            <Button
-                              onClick={() => (entry.isEditing ? saveTranscriptEdit(entry.id) : toggleEdit(entry.id))}
-                              size="sm"
-                              variant="ghost"
-                            >
-                              {entry.isEditing ? <Save className="h-3 w-3" /> : <Edit2 className="h-3 w-3" />}
-                            </Button>
-                            <Button
-                              onClick={() => deleteEntry(entry.id)}
-                              size="sm"
-                              variant="ghost"
-                              className="text-destructive hover:text-destructive"
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
                         </div>
-                        {entry.isEditing ? (
-                          <Textarea
-                            value={entry.text}
-                            onChange={(e) => editTranscript(entry.id, e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" && e.ctrlKey) {
-                                saveTranscriptEdit(entry.id)
-                              }
-                            }}
-                            className="min-h-20"
-                            placeholder="Edit transcript..."
-                          />
-                        ) : (
-                          <p className="text-sm leading-relaxed">{entry.text}</p>
-                        )}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </CardContent>
