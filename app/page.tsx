@@ -847,8 +847,8 @@ export default function SpeechTranscriptionApp() {
     <div className="min-h-screen bg-background p-4">
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="text-center">
-          <h1 className="text-3xl font-bold mb-2">Speech Transcription</h1>
-          <p className="text-muted-foreground">Real-time speech-to-text with 15-second segments and audio recording</p>
+          <h1 className="text-3xl font-bold mb-2">LiguScribe</h1>
+          <p className="text-muted-foreground">Real-time courtroom transcription with audio recordings</p>
         </div>
 
         <Tabs defaultValue="recording" className="w-full">
