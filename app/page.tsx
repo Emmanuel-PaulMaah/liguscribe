@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -41,7 +41,7 @@ export default function SpeechTranscriptionApp() {
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([])
   const [currentSpeaker, setCurrentSpeaker] = useState("Speaker 1")
-  const [speakers, setSpeakers] = useState(["Speaker 1", "Speaker 2"])
+  const [speakers, setSpeakers] = useState(["Speaker 1", "Speaker 2", "Speaker 3", "Speaker 4", "Speaker 5"])
   const [newSpeakerName, setNewSpeakerName] = useState("")
   const [isSupported, setIsSupported] = useState(true)
   const [interimText, setInterimText] = useState("")
@@ -66,6 +66,7 @@ export default function SpeechTranscriptionApp() {
   >([])
   const [showSpellCheck, setShowSpellCheck] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [currentTranscriptIndex, setCurrentTranscriptIndex] = useState<number | null>(null)
 
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -76,6 +77,31 @@ export default function SpeechTranscriptionApp() {
   const lastSpeechTimeRef = useRef<number>(0)
   const entryStartTimeRef = useRef<Date | null>(null)
   const { toast } = useToast()
+
+  const togglePlayback = useCallback(() => {
+    if (!audioUrl) return
+
+    if (!audioRef.current) {
+      audioRef.current = new Audio(audioUrl)
+      audioRef.current.volume = volume[0]
+      audioRef.current.playbackRate = playbackRate[0]
+    }
+
+    if (isPlaying) {
+      audioRef.current.pause()
+      setIsPlaying(false)
+    } else {
+      audioRef.current.play()
+      setIsPlaying(true)
+    }
+  }, [audioUrl, isPlaying, volume, playbackRate])
+
+  const handleVolumeChange = useCallback((newVolume: number[]) => {
+    setVolume(newVolume)
+    if (audioRef.current) {
+      audioRef.current.volume = newVolume[0]
+    }
+  }, [])
 
   useEffect(() => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
@@ -188,21 +214,115 @@ export default function SpeechTranscriptionApp() {
     if (audioRef.current) {
       const audio = audioRef.current
 
-      const updateTime = () => setCurrentTime(audio.currentTime)
-      const updateDuration = () => setDuration(audio.duration)
-      const handleEnded = () => setIsPlaying(false)
+      const handleTimeUpdate = () => {
+        setCurrentTime(audio.currentTime)
 
-      audio.addEventListener("timeupdate", updateTime)
-      audio.addEventListener("loadedmetadata", updateDuration)
+        // Find which transcript entry corresponds to current audio time
+        const currentIndex = transcript.findIndex((entry, index) => {
+          const entryStart = entry.timestamp.getTime() / 1000 - sessionStartTime / 1000
+          const nextEntry = transcript[index + 1]
+          const entryEnd = nextEntry ? nextEntry.timestamp.getTime() / 1000 - sessionStartTime / 1000 : audio.duration
+
+          return audio.currentTime >= entryStart && audio.currentTime < entryEnd
+        })
+
+        setCurrentTranscriptIndex(currentIndex >= 0 ? currentIndex : null)
+      }
+
+      const handleLoadedMetadata = () => {
+        setDuration(audio.duration)
+      }
+
+      const handleEnded = () => {
+        setIsPlaying(false)
+        setCurrentTranscriptIndex(null)
+      }
+
+      audio.addEventListener("timeupdate", handleTimeUpdate)
+      audio.addEventListener("loadedmetadata", handleLoadedMetadata)
       audio.addEventListener("ended", handleEnded)
 
       return () => {
-        audio.removeEventListener("timeupdate", updateTime)
-        audio.removeEventListener("loadedmetadata", updateDuration)
+        audio.removeEventListener("timeupdate", handleTimeUpdate)
+        audio.removeEventListener("loadedmetadata", handleLoadedMetadata)
         audio.removeEventListener("ended", handleEnded)
       }
     }
-  }, [audioUrl])
+  }, [audioUrl, transcript, sessionStartTime])
+
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (!isRecording) return
+
+      // Number keys 1-5 for instant speaker switching
+      if (e.key >= "1" && e.key <= "5") {
+        const speakerIndex = Number.parseInt(e.key) - 1
+        if (speakerIndex < speakers.length) {
+          const targetSpeaker = speakers[speakerIndex]
+          if (targetSpeaker !== currentSpeaker) {
+            switchSpeakerInstantly(targetSpeaker)
+          }
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyPress)
+    return () => window.removeEventListener("keydown", handleKeyPress)
+  }, [isRecording, speakers, currentSpeaker])
+
+  useEffect(() => {
+    const handleAudioKeyPress = (e: KeyboardEvent) => {
+      if (!audioUrl || !audioRef.current) return
+
+      // Prevent shortcuts when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      switch (e.key) {
+        case " ":
+          e.preventDefault()
+          togglePlayback()
+          break
+        case "ArrowLeft":
+          e.preventDefault()
+          if (e.shiftKey) {
+            seekTo(Math.max(0, audioRef.current.currentTime - 30))
+          } else {
+            seekTo(Math.max(0, audioRef.current.currentTime - 5))
+          }
+          break
+        case "ArrowRight":
+          e.preventDefault()
+          if (e.shiftKey) {
+            seekTo(Math.min(duration, audioRef.current.currentTime + 30))
+          } else {
+            seekTo(Math.min(duration, audioRef.current.currentTime + 5))
+          }
+          break
+        case "ArrowUp":
+          e.preventDefault()
+          handleVolumeChange([Math.min(1, volume[0] + 0.1)])
+          break
+        case "ArrowDown":
+          e.preventDefault()
+          handleVolumeChange([Math.max(0, volume[0] - 0.1)])
+          break
+        case "l":
+        case "L":
+          e.preventDefault()
+          if (audioRef.current) {
+            audioRef.current.loop = !audioRef.current.loop
+            toast({
+              title: audioRef.current.loop ? "Loop Enabled" : "Loop Disabled",
+              description: audioRef.current.loop ? "Audio will repeat when finished" : "Audio will stop when finished",
+            })
+          }
+          break
+      }
+    }
+
+    window.addEventListener("keydown", handleAudioKeyPress)
+    return () => window.removeEventListener("keydown", handleAudioKeyPress)
+  }, [audioUrl, volume, duration, togglePlayback, handleVolumeChange, toast])
 
   const startRecording = async () => {
     if (!recognitionRef.current || !isSupported) return
@@ -311,24 +431,6 @@ export default function SpeechTranscriptionApp() {
     }
   }
 
-  const togglePlayback = () => {
-    if (!audioUrl) return
-
-    if (!audioRef.current) {
-      audioRef.current = new Audio(audioUrl)
-      audioRef.current.volume = volume[0]
-      audioRef.current.playbackRate = playbackRate[0]
-    }
-
-    if (isPlaying) {
-      audioRef.current.pause()
-      setIsPlaying(false)
-    } else {
-      audioRef.current.play()
-      setIsPlaying(true)
-    }
-  }
-
   const seekTo = (time: number) => {
     if (audioRef.current) {
       audioRef.current.currentTime = time
@@ -347,13 +449,6 @@ export default function SpeechTranscriptionApp() {
     if (audioRef.current) {
       const newTime = Math.min(duration, audioRef.current.currentTime + 10)
       seekTo(newTime)
-    }
-  }
-
-  const handleVolumeChange = (newVolume: number[]) => {
-    setVolume(newVolume)
-    if (audioRef.current) {
-      audioRef.current.volume = newVolume[0]
     }
   }
 
@@ -714,6 +809,13 @@ export default function SpeechTranscriptionApp() {
     })
   }
 
+  const jumpToTranscript = (index: number) => {
+    if (!audioRef.current || !transcript[index]) return
+
+    const entryStart = transcript[index].timestamp.getTime() / 1000 - sessionStartTime / 1000
+    seekTo(entryStart)
+  }
+
   const toggleEditSpeaker = (id: string) => {
     setTranscript((prev) =>
       prev.map((entry) => (entry.id === id ? { ...entry, isEditingSpeaker: !entry.isEditingSpeaker } : entry)),
@@ -804,31 +906,46 @@ export default function SpeechTranscriptionApp() {
                         ))}
                       </SelectContent>
                     </Select>
-                    {isRecording && speakers.length > 1 && (
+
+                    {isRecording && (
                       <div className="flex gap-1">
-                        {speakers
-                          .filter((s) => s !== currentSpeaker)
-                          .slice(0, 3)
-                          .map((speaker) => (
-                            <Button
-                              key={speaker}
-                              onClick={() => switchSpeakerInstantly(speaker)}
-                              size="sm"
-                              variant="outline"
-                              className="text-xs px-2 py-1 h-7"
-                            >
-                              {speaker}
-                            </Button>
-                          ))}
+                        {speakers.map((speaker, index) => (
+                          <Button
+                            key={speaker}
+                            onClick={() => switchSpeakerInstantly(speaker)}
+                            size="sm"
+                            variant={speaker === currentSpeaker ? "default" : "outline"}
+                            className={`text-xs px-2 py-1 h-7 min-w-[60px] relative transition-all duration-200 ${
+                              speaker === currentSpeaker
+                                ? "bg-green-600 hover:bg-green-700 text-white shadow-lg ring-2 ring-green-300 ring-opacity-50"
+                                : "hover:bg-muted"
+                            }`}
+                            disabled={speaker === currentSpeaker}
+                          >
+                            <span className="absolute top-0 left-1 text-[10px] opacity-60">{index + 1}</span>
+                            {speaker === currentSpeaker && (
+                              <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse">
+                                <div className="absolute inset-0 w-3 h-3 bg-red-500 rounded-full animate-ping opacity-75"></div>
+                              </div>
+                            )}
+                            {speaker}
+                          </Button>
+                        ))}
                       </div>
                     )}
                   </div>
 
                   {(interimText || accumulatedTextRef.current) && (
-                    <div className="p-3 bg-muted rounded-lg space-y-2">
-                      <p className="text-sm text-muted-foreground mb-1">
-                        Listening... (Creates new entry after 15 seconds of silence or speaker switch)
-                      </p>
+                    <div className="p-3 bg-muted rounded-lg space-y-2 border-l-4 border-green-500">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                          <span className="text-sm font-medium text-green-600">{currentSpeaker} is speaking</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          (Creates new entry after 15 seconds of silence or speaker switch)
+                        </span>
+                      </div>
                       {accumulatedTextRef.current && (
                         <div className="text-sm">
                           <span className="font-medium text-green-600">Accumulated: </span>
@@ -848,8 +965,8 @@ export default function SpeechTranscriptionApp() {
                     <div className="text-sm text-muted-foreground bg-muted p-3 rounded-lg">
                       <p>
                         💡 <strong>Tip:</strong> Speech is grouped into 15-second segments automatically. Switch
-                        speakers instantly using the dropdown or quick-switch buttons - any accumulated text will be
-                        saved immediately to the previous speaker.
+                        speakers instantly using the dropdown, quick-switch buttons, or keyboard shortcuts (1-5 keys) -
+                        any accumulated text will be saved immediately to the previous speaker.
                       </p>
                     </div>
                   )}
@@ -910,7 +1027,13 @@ export default function SpeechTranscriptionApp() {
                           </div>
                         ) : (
                           <div className="flex items-center gap-1">
-                            <Badge variant={speaker === currentSpeaker ? "default" : "secondary"}>{speaker}</Badge>
+                            <Badge
+                              variant="secondary"
+                              className="cursor-pointer hover:bg-muted"
+                              onClick={() => startEditingSpeaker(speaker)}
+                            >
+                              {speaker}
+                            </Badge>
                             <Button
                               onClick={() => startEditingSpeaker(speaker)}
                               size="sm"
@@ -931,53 +1054,42 @@ export default function SpeechTranscriptionApp() {
 
           <TabsContent value="playback" className="space-y-6">
             {audioUrl && (
-              <Card className="bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 border-slate-200 dark:border-slate-700">
+              <Card className="bg-black text-white border-gray-800">
                 <CardHeader className="pb-4">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
-                        <svg
-                          className="h-5 w-5 text-blue-600 dark:text-blue-400"
-                          fill="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-                        </svg>
-                      </div>
-                      Enhanced Audio Player
-                    </CardTitle>
+                  <CardTitle className="flex items-center gap-2 text-white">
+                    <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                    </svg>
+                    Enhanced Audio Player
                     {isPlaying && (
-                      <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
-                        <div className="w-2 h-2 bg-blue-600 dark:bg-blue-400 rounded-full animate-pulse"></div>
-                        Playing...
+                      <div className="flex items-center gap-2 ml-auto">
+                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                        <span className="text-sm text-red-400">Playing</span>
                       </div>
                     )}
-                  </div>
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  <div className="bg-slate-100 dark:bg-slate-800 rounded-lg p-8 min-h-[120px] flex items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-600">
-                    <div className="text-center space-y-2">
-                      <div className="flex items-center justify-center gap-1">
-                        {[...Array(20)].map((_, i) => (
+                  <div className="relative bg-gray-900 rounded-lg p-8 border border-gray-700">
+                    <div className="flex items-center justify-center h-32">
+                      <div className="flex items-end gap-1 h-full">
+                        {Array.from({ length: 50 }).map((_, i) => (
                           <div
                             key={i}
-                            className={`w-1 bg-blue-400 dark:bg-blue-500 rounded-full transition-all duration-300 ${
-                              isPlaying ? "animate-pulse" : ""
+                            className={`w-2 bg-gradient-to-t transition-all duration-300 ${
+                              isPlaying ? "from-blue-600 to-blue-400 animate-pulse" : "from-gray-600 to-gray-500"
                             }`}
                             style={{
-                              height: `${Math.random() * 40 + 10}px`,
-                              animationDelay: `${i * 0.1}s`,
+                              height: `${Math.random() * 80 + 20}%`,
+                              animationDelay: `${i * 50}ms`,
                             }}
                           />
                         ))}
                       </div>
-                      <p className="text-sm text-slate-500 dark:text-slate-400">
-                        {isPlaying ? "Audio Waveform" : "Waveform Visualization"}
-                      </p>
                     </div>
                   </div>
 
-                  <div className="flex justify-between items-center text-sm text-slate-600 dark:text-slate-400 font-mono">
+                  <div className="flex justify-between items-center text-sm text-gray-400 font-mono">
                     <span>{formatTime(currentTime)}</span>
                     <span>{formatTime(duration)}</span>
                   </div>
@@ -987,36 +1099,36 @@ export default function SpeechTranscriptionApp() {
                     max={duration || 100}
                     step={1}
                     onValueChange={(value) => seekTo(value[0])}
-                    className="w-full"
+                    className="w-full [&>span:first-child]:bg-gray-700 [&>span:first-child>span]:bg-blue-500"
                   />
 
-                  <div className="flex items-center justify-center gap-3">
+                  <div className="flex items-center justify-center gap-4">
                     <Button
                       onClick={skipBackward}
                       size="lg"
                       variant="outline"
-                      className="rounded-full w-12 h-12 bg-transparent"
+                      className="rounded-full w-12 h-12 bg-gray-800 border-gray-600 hover:bg-gray-700 text-white"
                     >
                       <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
                       </svg>
                     </Button>
-                    <span className="text-xs text-slate-500">10s</span>
+                    <span className="text-xs text-gray-500">10s</span>
 
                     <Button
                       onClick={togglePlayback}
                       size="lg"
-                      className="rounded-full w-16 h-16 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+                      className="rounded-full w-16 h-16 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/25"
                     >
                       {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 ml-1" />}
                     </Button>
 
-                    <span className="text-xs text-slate-500">10s</span>
+                    <span className="text-xs text-gray-500">10s</span>
                     <Button
                       onClick={skipForward}
                       size="lg"
                       variant="outline"
-                      className="rounded-full w-12 h-12 bg-transparent"
+                      className="rounded-full w-12 h-12 bg-gray-800 border-gray-600 hover:bg-gray-700 text-white"
                     >
                       <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
@@ -1037,7 +1149,7 @@ export default function SpeechTranscriptionApp() {
                       }}
                       size="lg"
                       variant="outline"
-                      className="rounded-full w-12 h-12"
+                      className="rounded-full w-12 h-12 bg-gray-800 border-gray-600 hover:bg-gray-700 text-white"
                     >
                       <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" />
@@ -1047,11 +1159,11 @@ export default function SpeechTranscriptionApp() {
 
                   <div className="flex items-center justify-between gap-6">
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Speed:</span>
+                      <span className="text-sm font-medium text-gray-300">Speed:</span>
                       <select
                         value={playbackRate[0]}
                         onChange={(e) => handlePlaybackRateChange([Number.parseFloat(e.target.value)])}
-                        className="px-3 py-1 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm"
+                        className="px-3 py-1 rounded-md border border-gray-600 bg-gray-800 text-white text-sm focus:ring-2 focus:ring-blue-500"
                       >
                         <option value={0.5}>0.5x</option>
                         <option value={0.75}>0.75x</option>
@@ -1063,27 +1175,31 @@ export default function SpeechTranscriptionApp() {
                     </div>
 
                     <div className="flex items-center gap-3 flex-1 max-w-xs">
-                      <Volume2 className="h-4 w-4 text-slate-600 dark:text-slate-400" />
-                      <Slider value={volume} max={1} step={0.1} onValueChange={handleVolumeChange} className="flex-1" />
-                      <span className="text-sm text-slate-600 dark:text-slate-400 w-10">
-                        {Math.round(volume[0] * 100)}%
-                      </span>
+                      <Volume2 className="h-4 w-4 text-gray-400" />
+                      <Slider
+                        value={volume}
+                        max={1}
+                        step={0.1}
+                        onValueChange={handleVolumeChange}
+                        className="flex-1 [&>span:first-child]:bg-gray-700 [&>span:first-child>span]:bg-blue-500"
+                      />
+                      <span className="text-sm text-gray-400 w-10">{Math.round(volume[0] * 100)}%</span>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-700">
                     <Button
                       onClick={downloadAudio}
                       variant="outline"
-                      className="flex items-center gap-2 bg-transparent"
+                      className="flex items-center gap-2 bg-gray-800 border-gray-600 hover:bg-gray-700 text-white"
                     >
                       <Download className="h-4 w-4" />
                       Download Audio
                     </Button>
 
-                    <div className="text-xs text-slate-500 dark:text-slate-400">
-                      <span className="font-medium">Keyboard Shortcuts:</span> Space (play/pause) • ←/→ (5s skip) •
-                      Shift+←/→ (30s skip) • ↑/↓ (volume) • L (loop segment)
+                    <div className="text-xs text-gray-500">
+                      <span className="font-medium text-gray-400">Keyboard Shortcuts:</span> Space (play/pause) • ←/→
+                      (5s skip) • Shift+←/→ (30s skip) • ↑/↓ (volume) • L (loop)
                     </div>
                   </div>
                 </CardContent>
@@ -1161,10 +1277,24 @@ export default function SpeechTranscriptionApp() {
                   </p>
                 ) : (
                   <div className="space-y-4 max-h-96 overflow-y-auto">
-                    {transcript.map((entry) => (
-                      <div key={entry.id} className="border rounded-lg p-4 space-y-2">
+                    {transcript.map((entry, index) => (
+                      <div
+                        key={entry.id}
+                        className={`border rounded-lg p-4 space-y-2 transition-all cursor-pointer ${
+                          currentTranscriptIndex === index
+                            ? "border-blue-400 bg-blue-50 dark:bg-blue-950 shadow-lg"
+                            : "border-blue-200 hover:border-blue-300"
+                        }`}
+                        onClick={() => jumpToTranscript(index)}
+                      >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
+                            {currentTranscriptIndex === index && (
+                              <div className="flex items-center gap-1">
+                                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                                <span className="text-xs text-blue-600 font-medium">Playing</span>
+                              </div>
+                            )}
                             {entry.isEditingSpeaker ? (
                               <div className="flex items-center gap-1">
                                 <Select
