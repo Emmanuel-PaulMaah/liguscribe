@@ -4,9 +4,10 @@ import { GeistMono } from 'geist/font/mono'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'LiguScribe – Court Transcription Software',
-  description: 'Courtroom Transcription Software',
+  title: 'LiguScribe',
+  description: 'Real-time Courtroom Transcription',
   author: 'Emmanuel PaulMaah',
+    generator: 'v0.app'
 }
 
 export default function RootLayout({
