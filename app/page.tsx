@@ -53,6 +53,8 @@ export default function SpeechTranscriptionApp() {
   const [newSpeakerName, setNewSpeakerName] = useState("")
   const [isSupported, setIsSupported] = useState(true)
   const [interimText, setInterimText] = useState("")
+  // Mirrors accumulatedTextRef so the live preview re-renders as final segments come in
+  const [liveText, setLiveText] = useState("")
   const [sessionStartTime, setSessionStartTime] = useState<Date | null>(null)
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -398,6 +400,7 @@ export default function SpeechTranscriptionApp() {
       setTranscript((prev) => [...prev, newEntry])
 
       accumulatedTextRef.current = ""
+      setLiveText("")
       entryStartTimeRef.current = null
 
       if (entryTimerRef.current) {
@@ -445,7 +448,19 @@ export default function SpeechTranscriptionApp() {
         const blob = new Blob(chunksRef.current, { type: "audio/webm" })
         setAudioBlob(blob)
         const url = URL.createObjectURL(blob)
-        setAudioUrl(url)
+        // Revoke any previous session URL before swapping in the new one (avoids object-URL leak)
+        setAudioUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev)
+          return url
+        })
+        // Reset the audio element so the new blob is loaded next play
+        if (audioRef.current) {
+          audioRef.current.pause()
+          audioRef.current = null
+        }
+        setIsPlaying(false)
+        setCurrentTime(0)
+        setDuration(0)
       }
 
       // Start audio recorder for playback
@@ -499,6 +514,7 @@ export default function SpeechTranscriptionApp() {
               }
 
               accumulatedTextRef.current += (accumulatedTextRef.current ? " " : "") + transcript.trim()
+              setLiveText(accumulatedTextRef.current)
 
               // Reset timer for entry creation
               if (entryTimerRef.current) {
@@ -539,6 +555,7 @@ export default function SpeechTranscriptionApp() {
 
       // Reset accumulated text
       accumulatedTextRef.current = ""
+      setLiveText("")
       entryStartTimeRef.current = null
       lastSpeechTimeRef.current = 0
       if (entryTimerRef.current) {
@@ -587,6 +604,7 @@ export default function SpeechTranscriptionApp() {
       }
       setTranscript((prev) => [...prev, newEntry])
       accumulatedTextRef.current = ""
+      setLiveText("")
       entryStartTimeRef.current = null
     }
 
@@ -595,6 +613,7 @@ export default function SpeechTranscriptionApp() {
       entryTimerRef.current = null
     }
 
+    setInterimText("")
     setIsRecording(false)
     setConnectionStatus("disconnected")
 
@@ -615,6 +634,7 @@ export default function SpeechTranscriptionApp() {
       setTranscript((prev) => [...prev, newEntry])
 
       accumulatedTextRef.current = ""
+      setLiveText("")
       entryStartTimeRef.current = null
 
       if (entryTimerRef.current) {
@@ -647,6 +667,7 @@ export default function SpeechTranscriptionApp() {
         }
         setTranscript((prev) => [...prev, newEntry])
         accumulatedTextRef.current = ""
+        setLiveText("")
         entryStartTimeRef.current = null
         if (entryTimerRef.current) {
           clearTimeout(entryTimerRef.current)
@@ -728,32 +749,66 @@ export default function SpeechTranscriptionApp() {
     }
   }, [audioUrl])
 
+  const statusStyles =
+    connectionStatus === "connected"
+      ? "bg-success/15 text-success border-success/30"
+      : connectionStatus === "connecting"
+        ? "bg-warning/15 text-warning-foreground border-warning/40"
+        : "bg-muted text-muted-foreground border-border"
+  const statusDotClass =
+    connectionStatus === "connected"
+      ? "bg-success motion-safe:animate-pulse"
+      : connectionStatus === "connecting"
+        ? "bg-warning motion-safe:animate-pulse"
+        : "bg-muted-foreground/50"
+  const statusLabel =
+    connectionStatus === "connected"
+      ? "Live · Connected to Deepgram"
+      : connectionStatus === "connecting"
+        ? "Connecting…"
+        : "Idle"
+
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold">Liguscribe</h1>
-          <p className="text-muted-foreground">
-            Courtroom Transcription Software – Record and transcribe speech from multiple speakers
-          </p>
-          <div className="flex justify-center gap-2">
-            <Badge
-              variant={
-                connectionStatus === "connected"
-                  ? "default"
-                  : connectionStatus === "connecting"
-                    ? "secondary"
-                    : "outline"
-              }
+    <div className="min-h-dvh bg-background text-foreground">
+      {/* App header */}
+      <header className="border-b border-border bg-card/60 backdrop-blur supports-[backdrop-filter]:bg-card/50">
+        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 px-4 md:px-8 py-4">
+          <div className="flex items-center gap-3">
+            <div
+              aria-hidden="true"
+              className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm"
             >
+              <Mic className="h-5 w-5" />
+            </div>
+            <div className="leading-tight">
+              <h1 className="font-display text-2xl md:text-[1.6rem] font-semibold tracking-tight">
+                Liguscribe
+              </h1>
+              <p className="text-xs md:text-sm text-muted-foreground">
+                Courtroom transcription · multi-speaker · editable
+              </p>
+            </div>
+          </div>
+
+          <div
+            role="status"
+            aria-live="polite"
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${statusStyles}`}
+          >
+            <span className={`h-2 w-2 rounded-full ${statusDotClass}`} />
+            <span className="hidden sm:inline">{statusLabel}</span>
+            <span className="sm:hidden">
               {connectionStatus === "connected"
-                ? "Connected"
+                ? "Live"
                 : connectionStatus === "connecting"
-                  ? "Connecting..."
-                  : "Disconnected"}
-            </Badge>
+                  ? "…"
+                  : "Idle"}
+            </span>
           </div>
         </div>
+      </header>
+
+      <div className="max-w-6xl mx-auto px-4 md:px-8 py-6 md:py-8 space-y-6">
 
         <Tabs defaultValue="recording" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
@@ -781,18 +836,23 @@ export default function SpeechTranscriptionApp() {
                     onClick={isRecording ? stopRecording : startRecording}
                     variant={isRecording ? "destructive" : "default"}
                     size="lg"
-                    className="flex items-center gap-2"
+                    className="flex items-center gap-2 min-h-11"
                     disabled={connectionStatus === "connecting"}
+                    aria-pressed={isRecording}
+                    aria-label={isRecording ? "Stop recording" : "Start recording"}
                   >
                     {connectionStatus === "connecting" ? (
                       <>
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                        Connecting...
+                        <div
+                          aria-hidden="true"
+                          className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+                        />
+                        Connecting…
                       </>
                     ) : isRecording ? (
                       <>
                         <MicOff className="h-4 w-4" />
-                        Stop & Export
+                        Stop & Save
                       </>
                     ) : (
                       <>
@@ -825,37 +885,67 @@ export default function SpeechTranscriptionApp() {
 
                 {isRecording && (
                   <div className="space-y-4">
-                    <div className="flex flex-wrap gap-2">
-                      <span className="text-sm text-muted-foreground mr-2">Quick Switch (1-5):</span>
-                      {speakers.slice(0, 5).map((speaker, index) => (
-                        <Button
-                          key={speaker}
-                          variant={currentSpeaker === speaker ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => quickSwitchSpeaker(speaker)}
-                          className="relative"
-                        >
-                          <span className="absolute -top-1 -left-1 bg-primary text-primary-foreground rounded-full w-4 h-4 text-xs flex items-center justify-center">
-                            {index + 1}
-                          </span>
-                          {speaker}
-                          {currentSpeaker === speaker && (
-                            <span className="ml-2 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                          )}
-                        </Button>
-                      ))}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs uppercase tracking-wide font-medium text-muted-foreground mr-1">
+                        Quick switch
+                      </span>
+                      {speakers.slice(0, 5).map((speaker, index) => {
+                        const active = currentSpeaker === speaker
+                        return (
+                          <Button
+                            key={speaker}
+                            variant={active ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => quickSwitchSpeaker(speaker)}
+                            aria-pressed={active}
+                            aria-keyshortcuts={`${index + 1}`}
+                            className="relative pl-7 min-h-9"
+                          >
+                            <kbd
+                              aria-hidden="true"
+                              className="absolute left-1.5 top-1/2 -translate-y-1/2 inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-background px-1 font-mono text-[10px] text-muted-foreground"
+                            >
+                              {index + 1}
+                            </kbd>
+                            <span>{speaker}</span>
+                            {active && (
+                              <span
+                                aria-hidden="true"
+                                className="ml-2 h-2 w-2 rounded-full bg-record motion-safe:animate-pulse"
+                              />
+                            )}
+                          </Button>
+                        )
+                      })}
                     </div>
 
-                    <div className="p-4 bg-muted rounded-lg">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="font-medium text-green-600">{currentSpeaker} is speaking</span>
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    <div className="rounded-lg border border-border bg-muted/40 p-4">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            aria-hidden="true"
+                            className="h-2 w-2 rounded-full bg-success motion-safe:animate-pulse"
+                          />
+                          <span className="font-medium text-foreground">
+                            {currentSpeaker}
+                          </span>
+                          <span className="text-sm text-muted-foreground">
+                            is speaking
+                          </span>
+                        </div>
                       </div>
-                      <div className="min-h-16 p-3 bg-background rounded border">
-                        {accumulatedTextRef.current && <p className="text-foreground">{accumulatedTextRef.current}</p>}
-                        {interimText && <p className="text-muted-foreground italic">{interimText}</p>}
-                        {!accumulatedTextRef.current && !interimText && (
-                          <p className="text-muted-foreground">Listening...</p>
+                      <div
+                        role="region"
+                        aria-live="polite"
+                        aria-label="Live transcription preview"
+                        className="min-h-20 rounded-md border border-border bg-background p-3 leading-relaxed"
+                      >
+                        {liveText && <p className="text-foreground">{liveText}</p>}
+                        {interimText && (
+                          <p className="text-muted-foreground italic">{interimText}</p>
+                        )}
+                        {!liveText && !interimText && (
+                          <p className="text-muted-foreground">Listening…</p>
                         )}
                       </div>
                     </div>
@@ -924,32 +1014,95 @@ export default function SpeechTranscriptionApp() {
           </TabsContent>
 
           <TabsContent value="playback" className="space-y-6">
+            {!audioUrl && (
+              <Card>
+                <CardContent className="py-10">
+                  <div className="flex flex-col items-center justify-center text-center gap-3">
+                    <div
+                      aria-hidden="true"
+                      className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground"
+                    >
+                      <Volume2 className="h-6 w-6" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-display text-lg font-semibold">
+                        No session audio yet
+                      </p>
+                      <p className="text-sm text-muted-foreground max-w-sm">
+                        Start a recording in the <span className="font-medium">Recording &amp; Controls</span> tab.
+                        Once you stop, the captured audio will appear here for playback, scrubbing, and download.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             {audioUrl && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+                  <CardTitle className="flex items-center gap-2 font-display text-xl tracking-tight">
                     <Volume2 className="h-5 w-5" />
                     Session Audio Player
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center gap-4">
-                    <Button variant="outline" size="icon" onClick={skipBackward}>
+                  <div className="flex flex-wrap items-center gap-3 md:gap-4">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={skipBackward}
+                      aria-label="Skip back 10 seconds"
+                      className="h-11 w-11"
+                    >
                       <SkipBack className="h-4 w-4" />
                     </Button>
-                    <Button onClick={togglePlayback} size="lg">
+                    <Button
+                      onClick={togglePlayback}
+                      size="lg"
+                      aria-pressed={isPlaying}
+                      aria-label={isPlaying ? "Pause" : "Play"}
+                      className="h-12 w-12 rounded-full p-0"
+                    >
                       {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
                     </Button>
-                    <Button variant="outline" size="icon" onClick={skipForward}>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={skipForward}
+                      aria-label="Skip forward 10 seconds"
+                      className="h-11 w-11"
+                    >
                       <SkipForward className="h-4 w-4" />
                     </Button>
 
-                    <div className="flex-1">{/* Slider code remains unchanged */}</div>
+                    <div className="flex-1 flex items-center gap-3 min-w-[12rem]">
+                      <span className="text-xs font-mono tabular-nums text-muted-foreground w-12 text-right">
+                        {formatTime(currentTime)}
+                      </span>
+                      <Slider
+                        value={[currentTime]}
+                        max={duration || 0}
+                        step={0.1}
+                        onValueChange={(value) => seekTo(value[0])}
+                        aria-label="Audio position"
+                        className="flex-1"
+                      />
+                      <span className="text-xs font-mono tabular-nums text-muted-foreground w-12">
+                        {formatTime(duration)}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-4">
-                    <Volume2 className="h-4 w-4" />
-                    <Slider value={volume} max={1} step={0.01} onValueChange={handleVolumeChange} className="w-24" />
+                  <div className="flex flex-wrap items-center gap-4">
+                    <Volume2 className="h-4 w-4 text-muted-foreground" />
+                    <Slider
+                      value={volume}
+                      max={1}
+                      step={0.01}
+                      onValueChange={handleVolumeChange}
+                      aria-label="Volume"
+                      className="w-24"
+                    />
 
                     <Select
                       value={playbackRate[0].toString()}
@@ -1019,7 +1172,7 @@ export default function SpeechTranscriptionApp() {
                       <div
                         key={entry.id}
                         className={`border rounded-lg p-4 space-y-2 transition-colors ${
-                          currentTranscriptIndex === index ? "bg-blue-50 border-blue-300" : ""
+                          currentTranscriptIndex === index ? "bg-accent/40 border-ring/30" : ""
                         }`}
                       >
                         <div className="flex items-center justify-between">
@@ -1053,7 +1206,7 @@ export default function SpeechTranscriptionApp() {
                                 {entry.speaker}
                               </Badge>
                             )}
-                            <span className="text-sm text-muted-foreground">
+                            <span className="text-sm text-muted-foreground font-mono tabular-nums">
                               <Clock className="h-3 w-3 inline mr-1" />
                               {entry.timestamp.toLocaleTimeString()}
                             </span>

@@ -1,13 +1,22 @@
 import type { Metadata } from 'next'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
+import { EB_Garamond } from 'next/font/google'
 import './globals.css'
 
+const ebGaramond = EB_Garamond({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  display: 'swap',
+  variable: '--font-serif',
+})
+
 export const metadata: Metadata = {
-  title: 'LiguScribe',
-  description: 'Real-time Courtroom Transcription',
-  author: 'Emmanuel PaulMaah',
-    generator: 'v0.app'
+  title: 'Liguscribe — Courtroom Transcription',
+  description:
+    'Real-time courtroom transcription. Stream microphone audio to a multi-speaker, editable transcript with audio playback and Word/Text export.',
+  authors: [{ name: 'Emmanuel PaulMaah' }],
+  generator: 'v0.app',
 }
 
 export default function RootLayout({
@@ -16,7 +25,10 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      className={`${GeistSans.variable} ${GeistMono.variable} ${ebGaramond.variable}`}
+    >
       <head>
         <style>{`
 html {
